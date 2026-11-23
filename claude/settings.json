@@ -1,0 +1,48 @@
+{
+  "env": {
+    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/git-mods:~/.claude/mods/session-meter:~/.claude/mods/model-advisor"
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "model": "opus",
+  "enabledPlugins": {
+    "savvy-progress@claude-kit": true,
+    "catch-me-up@catch-me-up": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-warp": {
+      "source": {
+        "source": "github",
+        "repo": "warpdotdev/claude-code-warp"
+      }
+    },
+    "claude-kit": {
+      "source": {
+        "source": "github",
+        "repo": "JohnnyVizz/claude-kit"
+      }
+    },
+    "catch-me-up": {
+      "source": {
+        "source": "github",
+        "repo": "oliverow/catch-me-up"
+      }
+    }
+  },
+  "pluginConfigs": {
+    "savvy-progress@claude-kit": {
+      "options": {
+        "language": "auto",
+        "autoOpen": "savvy"
+      }
+    }
+  },
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
+  },
+  "theme": "dark",
+  "voiceEnabled": true
+}

@@ -1,0 +1,4 @@
+.claude-plugin/types/
+*.bak*
+.DS_Store
+.idea/

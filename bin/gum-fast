@@ -1,0 +1,5 @@
+#!/bin/bash
+# Fast gum wrapper that disables slow terminal queries
+export NO_COLOR=1
+export TERM=dumb
+exec /usr/bin/gum "$@"

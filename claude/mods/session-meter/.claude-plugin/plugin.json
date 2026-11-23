@@ -1,0 +1,6 @@
+{
+  "name": "session-meter",
+  "version": "0.1.0",
+  "description": "Coloured line under the prompt for the main session: model, what it is doing now, turn time, context fill and estimated cost",
+  "types": "./types/index.d.ts"
+}

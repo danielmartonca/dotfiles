@@ -1,0 +1,6 @@
+{
+  "name": "git-mods",
+  "version": "0.1.0",
+  "description": "Git buttons above the prompt, for one repo or across a workspace folder of repos: Commit all and Open PR following the repo's CLAUDE.md / AGENTS.md conventions, Clean to delete merged branches and fast-forward the rest, Jenkins / Bitbucket / Jira links for the branch, and Archive to write the session as a markdown handoff another agent can pick up",
+  "types": "./types/index.d.ts"
+}

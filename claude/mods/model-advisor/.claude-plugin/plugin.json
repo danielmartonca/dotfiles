@@ -1,0 +1,6 @@
+{
+  "name": "model-advisor",
+  "version": "0.1.0",
+  "description": "Suggests a cheaper model for easy prompts and a stronger one for hard ones, with a button to switch; quiet when a switch would cost more than it saves",
+  "types": "./types/index.d.ts"
+}
