@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
-import type { ArchivePhase, BotProps, CleanPhase, CleanPlan, Leftover, CommitGroup, CommitPhase, KeptBranch, LinkPhase, LinkTarget, MergedBranch, RemoteCopy, OpenPr, PrContext, PrPhase, RepoQueue, Baseline } from '../types'
+import type { ArchivePhase, BotProps, CleanPhase, CleanPlan, Leftover, CommitGroup, CommitPhase, KeptBranch, MergedBranch, RemoteCopy, OpenPr, PrContext, PrPhase, RepoQueue, Baseline } from '../types'
 
 const IDLE = { kind: 'idle' } as const
 const NO_QUEUE: RepoQueue = { roots: [], total: 0, isWorkspace: false }
@@ -11,10 +11,8 @@ const cleanPhase = atom({ plugin: 'git-mods', key: 'clean' } as const, IDLE as C
 const commitQueue = atom({ plugin: 'git-mods', key: 'commitQueue' } as const, NO_QUEUE)
 const prQueue = atom({ plugin: 'git-mods', key: 'prQueue' } as const, NO_QUEUE)
 const baseline = atom({ plugin: 'git-mods', key: 'baseline' } as const, null as Baseline | null)
-const linkPhase = atom({ plugin: 'git-mods', key: 'link' } as const, IDLE as LinkPhase)
 const archivePhase = atom({ plugin: 'git-mods', key: 'archive' } as const, IDLE as ArchivePhase)
 const setArchive = ($: EngineInterface, value: ArchivePhase) => update($, archivePhase, () => value)
-const setLink = ($: EngineInterface, value: LinkPhase) => update($, linkPhase, () => value)
 const setClean = ($: EngineInterface, value: CleanPhase) => update($, cleanPhase, () => value)
 // The kept-branches report stays on screen without holding up the other bots.
 const cleanBusy = (k: CleanPhase) => k.kind === 'working' || k.kind === 'confirm'
@@ -983,180 +981,6 @@ async function confirmClean($: EngineInterface, doReset: boolean, doRemote = tru
   await setClean($, IDLE)
 }
 
-const LINK_NAMES: Record<LinkTarget, string> = { jenkins: 'Jenkins', bitbucket: 'Bitbucket', jira: 'Jira' }
-// Site-specific endpoints stay out of the mod's source, in a file of the machine's own.
-const LINK_CONFIG = '.config/git-mods/config.json'
-// jenkinsJobsFiles: Groovy files, relative to the repo, listing each `repo:` with its multibranch `job:`.
-type LinkConfig = { jenkinsUrl?: string; jiraUrl?: string; jenkinsJobsFiles?: string[] }
-
-async function linkConfig($: EngineInterface): Promise<LinkConfig> {
-  const home = await $.env.get('HOME').catch(() => undefined)
-  const text = home ? await tryRead($, `${home}/${LINK_CONFIG}`) : undefined
-  try {
-    return text ? (JSON.parse(text) as LinkConfig) : {}
-  } catch {
-    return {}
-  }
-}
-
-const trimSlash = (url: string) => url.replace(/\/+$/, '')
-const BROWSERS = ['/mnt/c/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe', 'brave-browser', 'brave', 'wslview', 'xdg-open']
-
-// Detached, so a browser that starts here does not hold the call open.
-async function openInBrowser($: EngineInterface, url: string) {
-  for (const cmd of BROWSERS) {
-    const isThere = cmd.startsWith('/')
-      ? await $.fs.exists(cmd).catch(() => false)
-      : (await run($, ['sh', '-c', `command -v ${cmd}`]))?.exitCode === 0
-    if (!isThere) continue
-    const r = await run($, ['sh', '-c', 'setsid "$0" "$1" >/dev/null 2>&1 </dev/null &', cmd, url])
-    if (r?.exitCode === 0) return true
-  }
-  return false
-}
-
-// The branch's commit on origin as the server has it now, else as last fetched; undefined when never pushed.
-async function remoteHead(git: Git, branch: string) {
-  const out = await git(['ls-remote', '--heads', 'origin', `refs/heads/${branch}`]).catch(() => undefined)
-  if (out !== undefined) return out.split(/\s/)[0] || undefined
-  return (await git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]).catch(() => '')).trim() || undefined
-}
-
-async function jenkinsJob($: EngineInterface, git: Git, root: string, files: string[]) {
-  const origin = (await git(['remote', 'get-url', 'origin']).catch(() => '')).trim()
-  const repo = origin.match(/([^/:]+?)(?:\.git)?$/)?.[1]
-  if (!repo) return undefined
-  for (const file of files) {
-    const text = await tryRead($, `${root}/${file}`)
-    for (const entry of text?.split(/\n\s*\[\s*\n/) ?? []) {
-      if (entry.match(/\brepo:\s*'([^']+)'/)?.[1] === repo) return entry.match(/\bjob:\s*'([^']+)'/)?.[1]
-    }
-  }
-  return undefined
-}
-
-// Multibranch item names are URL-encoded once by Jenkins, so a branch with a slash shows up as %252F.
-const jenkinsUrl = (base: string, job: string, item: string) =>
-  `${trimSlash(base)}/${[...job.split('/'), encodeURIComponent(item)].map(s => `job/${encodeURIComponent(s)}`).join('/')}/`
-
-// The newest ticket this session names, for a branch that carries none.
-async function lastSessionTicket($: EngineInterface) {
-  const lines = (await sessionTickets($)).split('\n')
-  return lines.at(-1)?.match(new RegExp(TICKET.source, 'g'))?.at(-1)
-}
-
-// Repos a link button looks at: the touched ones, else, across a workspace, those on a feature branch.
-async function linkRoots($: EngineInterface) {
-  const t = await targets($)
-  if (t.isTouched) return t
-  const roots = (await inPool(t.roots, 6, async r => (PROTECTED_BRANCHES.has(await currentBranch($, r).catch(() => 'main')) ? '' : r))).filter(Boolean)
-  return { ...t, roots }
-}
-
-async function openJira($: EngineInterface) {
-  const { jiraUrl } = await linkConfig($)
-  if (!jiraUrl) return $.ui.toast(`Jira: set jiraUrl in ~/${LINK_CONFIG}`)
-  const t = await linkRoots($)
-  const branches = await Promise.all(t.roots.map(r => currentBranch($, r).catch(() => '')))
-  const fromBranches = [...new Set(branches.map(b => b.match(TICKET)?.[0]).filter((x): x is string => !!x))]
-  const session = fromBranches.length ? undefined : await lastSessionTicket($)
-  const tickets = fromBranches.length ? fromBranches : session ? [session] : []
-  if (!tickets.length) {
-    const what = t.isWorkspace ? 'No branch in the repos looked at' : branches[0] || 'This branch'
-    return $.ui.toast(`${what} names no ticket, and none came up in this session`)
-  }
-  let opened = 0
-  for (const ticket of tickets) {
-    const url = `${trimSlash(jiraUrl)}/browse/${ticket}`
-    $.ui.log(`Jira: ${url}`)
-    if (await openInBrowser($, url)) opened += 1
-  }
-  const from = fromBranches.length ? '' : ` (named in this session; ${t.isWorkspace ? 'no branch has one' : 'the branch has no ticket'})`
-  $.ui.toast(opened ? `Opened ${tickets.join(', ')}${from}` : 'No browser found; the Jira link is in the transcript')
-}
-
-type LinkFound = { url: string; what: string } | { skip: string }
-
-async function linkFor($: EngineInterface, target: 'jenkins' | 'bitbucket', root: string, note: (text: string) => Promise<unknown>): Promise<LinkFound> {
-  const name = LINK_NAMES[target]
-  const git = gitIn($, root)
-  const branch = (await git(['branch', '--show-current'])).trim()
-  if (!branch) throw new Error('HEAD is detached; check out a branch first')
-
-  await note('Checking the remote…')
-  const remoteSha = await remoteHead(git, branch)
-  if (!remoteSha) return { skip: `${branch} is not pushed yet, so ${name} has nothing for it` }
-  const unpushed = Number((await git(['rev-list', '--count', `${remoteSha}..HEAD`]).catch(() => '0')).trim()) || 0
-  const behind = unpushed ? ` (${unpushed} local commit(s) not pushed yet)` : ''
-
-  await note('Looking for a PR…')
-  const base = await baseBranch(git)
-  const bbPr = branch === base ? undefined : await findBbPr($)
-  const pr = bbPr ? await findOpenPr($, bbPr, root, base) : undefined
-
-  if (target === 'bitbucket') {
-    if (branch === base) return { skip: `${branch} is the base branch; it has no PR` }
-    if (!bbPr) throw new Error('bb-pr was not found on PATH or in ~/.local/bin')
-    if (!pr) return { skip: `No open PR for ${branch} yet` }
-    return { url: pr.url, what: `PR #${pr.id}${behind}` }
-  }
-  const { jenkinsUrl: jenkinsBase, jenkinsJobsFiles = [] } = await linkConfig($)
-  if (!jenkinsBase) return { skip: `Jenkins: set jenkinsUrl in ~/${LINK_CONFIG}` }
-  const job = await jenkinsJob($, git, root, jenkinsJobsFiles)
-  if (!job) return { skip: `No Jenkins job is known for this repo (looked in ${jenkinsJobsFiles.join(', ') || 'no jenkinsJobsFiles'})` }
-  // A branch with an open PR is built only as PR-<id>.
-  const item = pr ? `PR-${pr.id}` : branch
-  return { url: jenkinsUrl(jenkinsBase, job, item), what: `${job} » ${item}${behind}` }
-}
-
-async function openLink($: EngineInterface, target: LinkTarget) {
-  if (target === 'jira') return openJira($)
-  const name = LINK_NAMES[target]
-  const t = await linkRoots($)
-  if (!t.roots.length) return $.ui.toast(`${name}: no repo is on a feature branch`)
-  const opened: string[] = []
-  const skipped: string[] = []
-  let noBrowser = false
-  for (const root of t.roots) {
-    const tag = t.isWorkspace ? `${baseName(root)}: ` : ''
-    const note = (text: string) => setLink($, { kind: 'working', target, note: `${tag}${text}` })
-    const found = await linkFor($, target, root, note).catch((err): LinkFound => {
-      if (!t.isWorkspace) throw err
-      return { skip: errorText(err) }
-    })
-    if ('skip' in found) {
-      skipped.push(`${tag}${found.skip}`)
-      continue
-    }
-    $.ui.log(`${name}: ${found.url}`)
-    if (await openInBrowser($, found.url)) opened.push(found.what)
-    else noBrowser = true
-  }
-  if (!t.isWorkspace) {
-    const [skip] = skipped
-    if (skip) return $.ui.toast(skip)
-    return $.ui.toast(noBrowser ? `No browser found; the ${name} link is in the transcript` : `Opened ${opened[0]}`)
-  }
-  for (const s of skipped) $.ui.log(`${name}: ${s}`)
-  const parts = [
-    ...(opened.length ? [`opened ${opened.join(', ')}`] : []),
-    ...(noBrowser ? ['no browser found, links are in the transcript'] : []),
-    ...(skipped.length ? [`${skipped.length} skipped (see log)`] : []),
-  ]
-  $.ui.toast(`${name}: ${parts.join('; ') || 'nothing to open'}`)
-}
-
-async function startLink($: EngineInterface, target: LinkTarget) {
-  if ((await read($, linkPhase)).kind === 'working') return
-  await setLink($, { kind: 'working', target, note: 'Looking…' })
-  try {
-    await openLink($, target)
-  } catch (err) {
-    $.ui.toast(`${LINK_NAMES[target]}: ${errorText(err)}`)
-  }
-  await setLink($, IDLE)
-}
-
 const MAX_ARCHIVE_CHARS = 400_000
 const MAX_ARCHIVE_HEAD = 40_000
 const MAX_TOOL_CHARS = 2_000
@@ -1375,22 +1199,14 @@ function archiveBot(a: ArchivePhase): BotProps {
   return { variant: 'archive', mode: 'idle', label: 'Archive' }
 }
 
-function linkBot(l: LinkPhase, target: LinkTarget): BotProps {
-  if (l.kind === 'working') return l.target === target ? { variant: target, mode: 'busy', label: l.note } : { variant: target, mode: 'blocked', label: LINK_NAMES[target] }
-  return { variant: target, mode: 'idle', label: LINK_NAMES[target] }
-}
-
 const CLAUDE = '#D97757'
 const BUSY = '#E5C07B'
-const ICONS: Record<BotProps['variant'], string> = { commit: '●', pr: '⇡', clean: '✧', archive: '▤', jenkins: '⚙', bitbucket: '◆', jira: '◉' }
+const ICONS: Record<BotProps['variant'], string> = { commit: '●', pr: '⇡', clean: '✧', archive: '▤' }
 const ICON_COLORS: Record<BotProps['variant'], string> = {
   commit: '#7FD962',
   pr: '#6CB6FF',
   clean: '#56D4DD',
   archive: '#C792EA',
-  jenkins: '#F07178',
-  bitbucket: '#2684FF',
-  jira: '#4C9AFF',
 }
 const MAX_PUSH_LINES = 5
 
@@ -1689,7 +1505,6 @@ export const register: Register = on => {
     const current = await read($, phase)
     const pr = await read($, prPhase)
     const clean = await read($, cleanPhase)
-    const link = await read($, linkPhase)
     const archive = await read($, archivePhase)
     const { Box, Button, Text } = $.ui.resolve(e)
     const engine = await next(e)
@@ -1698,9 +1513,6 @@ export const register: Register = on => {
       [prBot(current, pr, clean), 'Open PR', () => startPr($), isGit],
       [cleanBot(current, pr, clean), 'Clean', () => startClean($), isGit],
       [archiveBot(archive), 'Archive', () => startArchive($), true],
-      [linkBot(link, 'jenkins'), 'Jenkins', () => startLink($, 'jenkins'), isGit],
-      [linkBot(link, 'bitbucket'), 'Bitbucket', () => startLink($, 'bitbucket'), isGit],
-      [linkBot(link, 'jira'), 'Jira', () => startLink($, 'jira'), isGit],
     ]
     const shown = bots.filter(([, , , isShown]) => isShown)
     const buttons = shown.flatMap(([b, name, start], i) => [

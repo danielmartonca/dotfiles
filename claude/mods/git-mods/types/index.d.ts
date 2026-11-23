@@ -54,19 +54,15 @@ export type CleanPhase =
   | { kind: 'confirm'; plans: CleanPlan[]; kept: KeptBranch[]; isWorkspace: boolean; scope: string }
   | { kind: 'report'; kept: KeptBranch[] }
 
-export type LinkTarget = 'jenkins' | 'bitbucket' | 'jira'
-
-export type LinkPhase = { kind: 'idle' } | { kind: 'working'; target: LinkTarget; note: string }
-
 export type ArchivePhase = { kind: 'idle' } | { kind: 'working'; note: string } | { kind: 'done'; path: string; title: string; isUpdate: boolean }
 
-export type BotProps = { variant: 'commit' | 'pr' | 'clean' | 'archive' | LinkTarget; mode: 'idle' | 'busy' | 'review' | 'blocked'; label: string; nudge?: boolean }
+export type BotProps = { variant: 'commit' | 'pr' | 'clean' | 'archive'; mode: 'idle' | 'busy' | 'review' | 'blocked'; label: string; nudge?: boolean }
 
 // Each workspace repo's state (HEAD, branch, git status) when the session started, keyed by repo path.
 export type Baseline = Record<string, string>
 
 declare module 'claude-code' {
   interface PluginState {
-    'git-mods': { phase: Shaped<CommitPhase>; pr: PrPhase; clean: Shaped<CleanPhase>; link: LinkPhase; archive: ArchivePhase; commitQueue: RepoQueue; prQueue: RepoQueue; baseline: Baseline | null }
+    'git-mods': { phase: Shaped<CommitPhase>; pr: PrPhase; clean: Shaped<CleanPhase>; archive: ArchivePhase; commitQueue: RepoQueue; prQueue: RepoQueue; baseline: Baseline | null }
   }
 }

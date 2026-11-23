@@ -16,7 +16,7 @@ test('small plain buttons sit under the prompt beside the engine hint, on every 
   for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ ...HINT, surface })
     const shown = JSON.stringify(await ui.drawn())
-    for (const label of ['Commit', 'Open PR', 'Clean', 'Archive', 'Jenkins', 'Bitbucket', 'Jira']) expect(shown).toContain(`"label":"${label}"`)
+    for (const label of ['Commit', 'Open PR', 'Clean', 'Archive']) expect(shown).toContain(`"label":"${label}"`)
     expect(shown).toContain('"plain":true')
     expect(shown).toContain('auto mode on')
     await ui.unmount()
