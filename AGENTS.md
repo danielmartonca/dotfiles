@@ -17,6 +17,7 @@ Tests use made-up names (`acme.*`, `example.com`, `ABC-123`).
 | --- | --- |
 | `~/.zshrc.local` | sourced at the end of `.zshrc` |
 | `~/.claude/CLAUDE.work.md` | imported at the end of `~/.claude/CLAUDE.md` |
+| `~/.config/git-mods/buttons.json` | extra git-mods buttons: `[{ "name", "command", "icon", "color" }]`, each running `/<command> <repo roots>` served by a local mod |
 | `~/.config/dotfiles/local.sh` | run at the end of `install.sh` (gets `DRY=1` on a dry run) |
 
 If a change only makes sense with those local values, put the value in the local file and make the repo code

@@ -78,3 +78,34 @@ test('a press on a button starts its work', async ($, on) => {
   await press($ as never, 'clean-bot')
   expect(toasts.join('\n')).toContain('Clean failed')
 })
+
+test('buttons listed in ~/.config/git-mods/buttons.json join the row and run their command on the repo', async ($, on) => {
+  const ran: string[] = []
+  const toasts: string[] = []
+  on('env.get', () => ({ value: '/home/me' }))
+  on('fs.read', (_$, e) => (e.path === '/home/me/.config/git-mods/buttons.json' ? { value: '[{ "name": "Tracker", "command": "acme-tracker", "icon": "◆" }]' } : { deny: 'missing' }))
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.join(' ')
+    const stdout = cmd === 'git rev-parse --is-inside-work-tree' ? 'true\n' : cmd === 'git rev-parse --show-toplevel' ? '/repo\n' : ''
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('command.run', (_$, e) => {
+    ran.push(`/${e.command} ${e.args}`)
+    return { text: 'Opened ABC-123' }
+  })
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  engineHint(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...HINT, surface: 'terminal' })
+  const shown = JSON.stringify(await ui.drawn())
+  expect(shown).toContain('"label":"Tracker"')
+  expect(shown).toContain('◆')
+  await ui.press({ key: 'extra-Tracker-bot' })
+  expect(ran).toEqual(['/acme-tracker /repo'])
+  expect(toasts).toContain('Opened ABC-123')
+  await ui.unmount()
+})

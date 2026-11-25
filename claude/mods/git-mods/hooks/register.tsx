@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
-import type { ArchivePhase, BotProps, CleanPhase, CleanPlan, Leftover, CommitGroup, CommitPhase, KeptBranch, MergedBranch, RemoteCopy, OpenPr, PrContext, PrPhase, RepoQueue, Baseline } from '../types'
+import type { ArchivePhase, BotProps, CleanPhase, CleanPlan, Leftover, CommitGroup, CommitPhase, ExtraButton, KeptBranch, MergedBranch, RemoteCopy, OpenPr, PrContext, PrPhase, RepoQueue, Baseline } from '../types'
 
 const IDLE = { kind: 'idle' } as const
 const NO_QUEUE: RepoQueue = { roots: [], total: 0, isWorkspace: false }
@@ -12,6 +12,8 @@ const commitQueue = atom({ plugin: 'git-mods', key: 'commitQueue' } as const, NO
 const prQueue = atom({ plugin: 'git-mods', key: 'prQueue' } as const, NO_QUEUE)
 const baseline = atom({ plugin: 'git-mods', key: 'baseline' } as const, null as Baseline | null)
 const archivePhase = atom({ plugin: 'git-mods', key: 'archive' } as const, IDLE as ArchivePhase)
+// The command of the extra button now running, if any.
+const extraBusy = atom({ plugin: 'git-mods', key: 'extra' } as const, null as string | null)
 const setArchive = ($: EngineInterface, value: ArchivePhase) => update($, archivePhase, () => value)
 const setClean = ($: EngineInterface, value: CleanPhase) => update($, cleanPhase, () => value)
 // The kept-branches report stays on screen without holding up the other bots.
@@ -1199,14 +1201,56 @@ function archiveBot(a: ArchivePhase): BotProps {
   return { variant: 'archive', mode: 'idle', label: 'Archive' }
 }
 
+// Machine-specific buttons stay out of this repo: a local file lists them, another mod serves their commands.
+const EXTRA_BUTTONS = '.config/git-mods/buttons.json'
+let extras: ExtraButton[] = []
+
+async function loadExtras($: EngineInterface) {
+  const home = await $.env.get('HOME').catch(() => undefined)
+  const text = home ? await tryRead($, `${home}/${EXTRA_BUTTONS}`) : undefined
+  try {
+    const list: unknown = text ? JSON.parse(text) : []
+    return (Array.isArray(list) ? list : []).filter((b): b is ExtraButton => typeof b?.name === 'string' && typeof b?.command === 'string')
+  } catch {
+    return []
+  }
+}
+
+// The repos an extra button acts on: the touched ones, else, across a workspace, those on a feature branch.
+async function extraRoots($: EngineInterface) {
+  const t = await targets($)
+  if (t.isTouched) return t.roots
+  return (await inPool(t.roots, 6, async r => (PROTECTED_BRANCHES.has(await currentBranch($, r).catch(() => 'main')) ? '' : r))).filter(Boolean)
+}
+
+async function startExtra($: EngineInterface, b: ExtraButton) {
+  if (await read($, extraBusy)) return
+  await update($, extraBusy, () => b.command)
+  try {
+    const roots = await extraRoots($)
+    const r = await $.command.run({ command: b.command, args: roots.join(' ') })
+    if (r.text) $.ui.toast(r.text)
+  } catch (err) {
+    $.ui.toast(`${b.name}: ${errorText(err)}`)
+  }
+  await update($, extraBusy, () => null)
+}
+
+function extraBot(b: ExtraButton, busy: string | null): BotProps {
+  const look = { icon: b.icon, color: b.color }
+  if (busy) return busy === b.command ? { variant: 'extra', mode: 'busy', label: 'Opening…', ...look } : { variant: 'extra', mode: 'blocked', label: b.name, ...look }
+  return { variant: 'extra', mode: 'idle', label: b.name, ...look }
+}
+
 const CLAUDE = '#D97757'
 const BUSY = '#E5C07B'
-const ICONS: Record<BotProps['variant'], string> = { commit: '●', pr: '⇡', clean: '✧', archive: '▤' }
+const ICONS: Record<BotProps['variant'], string> = { commit: '●', pr: '⇡', clean: '✧', archive: '▤', extra: '◇' }
 const ICON_COLORS: Record<BotProps['variant'], string> = {
   commit: '#7FD962',
   pr: '#6CB6FF',
   clean: '#56D4DD',
   archive: '#C792EA',
+  extra: '#9DA5B4',
 }
 const MAX_PUSH_LINES = 5
 
@@ -1241,6 +1285,7 @@ export const register: Register = on => {
     // A workspace folder of repos counts too: every git button then acts across them.
     const repos = inRepo ? [] : await childRepos($, e.cwd)
     isGitRepo = inRepo || repos.length > 0 || (inRepo === undefined ? undefined : false)
+    extras = await loadExtras($)
     // Once per session: a reload keeps the first snapshot, so earlier work still counts.
     if (repos.length && !(await read($, baseline))) {
       const shot = await snapshot($, repos)
@@ -1506,6 +1551,7 @@ export const register: Register = on => {
     const pr = await read($, prPhase)
     const clean = await read($, cleanPhase)
     const archive = await read($, archivePhase)
+    const busy = await read($, extraBusy)
     const { Box, Button, Text } = $.ui.resolve(e)
     const engine = await next(e)
     const bots: [BotProps, string, () => unknown, boolean][] = [
@@ -1513,23 +1559,27 @@ export const register: Register = on => {
       [prBot(current, pr, clean), 'Open PR', () => startPr($), isGit],
       [cleanBot(current, pr, clean), 'Clean', () => startClean($), isGit],
       [archiveBot(archive), 'Archive', () => startArchive($), true],
+      ...extras.map((b): [BotProps, string, () => unknown, boolean] => [extraBot(b, busy), b.name, () => startExtra($, b), isGit]),
     ]
     const shown = bots.filter(([, , , isShown]) => isShown)
-    const buttons = shown.flatMap(([b, name, start], i) => [
-      ...(i ? [<Text key={`${b.variant}-sep`} color={CLAUDE} dimColor>│</Text>] : []),
-      <Box key={`${b.variant}-item`} gap={1}>
-        <Text color={b.mode === 'blocked' ? undefined : b.mode === 'busy' ? BUSY : ICON_COLORS[b.variant]} dimColor={b.mode === 'blocked'}>
-          {b.mode === 'busy' ? '◌' : b.mode === 'review' ? '↑' : ICONS[b.variant]}
-        </Text>
-        <Button
-          key={`${b.variant}-bot`}
-          plain
-          label={b.mode === 'busy' || b.mode === 'review' ? `${name}: ${b.label}` : b.nudge ? `${name} !` : name}
-          dimColor={b.mode === 'blocked'}
-          onPress={() => (b.mode === 'idle' ? start() : undefined)}
-        />
-      </Box>,
-    ])
+    const buttons = shown.flatMap(([b, name, start], i) => {
+      const id = b.variant === 'extra' ? `extra-${name}` : b.variant
+      return [
+        ...(i ? [<Text key={`${id}-sep`} color={CLAUDE} dimColor>│</Text>] : []),
+        <Box key={`${id}-item`} gap={1}>
+          <Text color={b.mode === 'blocked' ? undefined : b.mode === 'busy' ? BUSY : (b.color ?? ICON_COLORS[b.variant])} dimColor={b.mode === 'blocked'}>
+            {b.mode === 'busy' ? '◌' : b.mode === 'review' ? '↑' : (b.icon ?? ICONS[b.variant])}
+          </Text>
+          <Button
+            key={`${id}-bot`}
+            plain
+            label={b.mode === 'busy' || b.mode === 'review' ? `${name}: ${b.label}` : b.nudge ? `${name} !` : name}
+            dimColor={b.mode === 'blocked'}
+            onPress={() => (b.mode === 'idle' ? start() : undefined)}
+          />
+        </Box>,
+      ]
+    })
     return (
       <Box justifyContent="space-between" alignItems="center" flexWrap="wrap">
         <Box flexGrow={1}>{engine}</Box>

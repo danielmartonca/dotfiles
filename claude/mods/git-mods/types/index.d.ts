@@ -56,13 +56,16 @@ export type CleanPhase =
 
 export type ArchivePhase = { kind: 'idle' } | { kind: 'working'; note: string } | { kind: 'done'; path: string; title: string; isUpdate: boolean }
 
-export type BotProps = { variant: 'commit' | 'pr' | 'clean' | 'archive'; mode: 'idle' | 'busy' | 'review' | 'blocked'; label: string; nudge?: boolean }
+export type BotProps = { variant: 'commit' | 'pr' | 'clean' | 'archive' | 'extra'; mode: 'idle' | 'busy' | 'review' | 'blocked'; label: string; nudge?: boolean; icon?: string; color?: string }
+
+// A button this machine adds from ~/.config/git-mods/buttons.json: it runs `/<command> <repo roots…>`, served by another mod.
+export type ExtraButton = { name: string; command: string; icon?: string; color?: string }
 
 // Each workspace repo's state (HEAD, branch, git status) when the session started, keyed by repo path.
 export type Baseline = Record<string, string>
 
 declare module 'claude-code' {
   interface PluginState {
-    'git-mods': { phase: Shaped<CommitPhase>; pr: PrPhase; clean: Shaped<CleanPhase>; archive: ArchivePhase; commitQueue: RepoQueue; prQueue: RepoQueue; baseline: Baseline | null }
+    'git-mods': { phase: Shaped<CommitPhase>; pr: PrPhase; clean: Shaped<CleanPhase>; archive: ArchivePhase; extra: string | null; commitQueue: RepoQueue; prQueue: RepoQueue; baseline: Baseline | null }
   }
 }
