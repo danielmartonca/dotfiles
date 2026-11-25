@@ -1,0 +1,6 @@
+{
+  "name": "review-nudge",
+  "version": "0.1.0",
+  "description": "Notices when work in a repo looks done (tests pass, a push, a PR coming) and offers a subagent running /code-review on each changed repo",
+  "types": "./types/index.d.ts"
+}

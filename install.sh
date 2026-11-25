@@ -31,6 +31,7 @@ FILES=(
 DIRS=(
   "claude/mods/git-mods:$HOME/.claude/mods/git-mods"
   "claude/mods/model-advisor:$HOME/.claude/mods/model-advisor"
+  "claude/mods/review-nudge:$HOME/.claude/mods/review-nudge"
   "claude/mods/session-meter:$HOME/.claude/mods/session-meter"
 )
 # Written by Claude Code into each mod; never part of the repo.
